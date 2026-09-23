@@ -956,7 +956,7 @@ window.__startApp = function(){
 <script>
 // PASTE your deployed Google Apps Script Web App URL here (see Code.gs).
 // It must end in /exec.
-const APPS_SCRIPT_ENDPOINT = "https://script.google.com/macros/s/AKfycbyGslISXtFeX0UbXGLYx4V_i0yL7wU2USY4VSstDTZZAYbVXoveXrsXzGuIkOl7-7f0/exec";
+const APPS_SCRIPT_ENDPOINT = "https://script.google.com/macros/s/AKfycbxsegBUHBVkNc825nr7EmLhxnKbb3oNVjqiehaiQHfUfG41V8nyLq95jkzuwnRnXp0v/exec";
 
 (function(){
   const loginScreen = document.getElementById('loginScreen');
@@ -984,101 +984,71 @@ const APPS_SCRIPT_ENDPOINT = "https://script.google.com/macros/s/AKfycbyGslISXtF
    *    (e.g. GitHub Pages) and APPS_SCRIPT_ENDPOINT has been filled in.
    * action: 'checkLogin' | 'registerStudent' | 'listAttempts' | 'setMaxAttempts' | 'resetAttempts'
    */
-  function callAction(action, payload, onSuccess, onFailure) {
-  const fail = onFailure || function(error) {
-    console.error('Apps Script error:', error);
-  };
+  function _errText(err){
+    if(!err) return 'unknown error';
+    if(typeof err === 'string') return err;
+    if(err.message) return err.message;
+    try{ return JSON.stringify(err); }catch(e){ return String(err); }
+  }
 
-  // Used only when the page itself is served by Apps Script.
-  if (
-    window.google &&
-    google.script &&
-    google.script.run
-  ) {
-    const runner = google.script.run
-      .withSuccessHandler(onSuccess)
-      .withFailureHandler(fail);
+  function callAction(action, payload, onSuccess, onFailure){
+    const fail = onFailure || function(){ /* no-op */ };
 
-    switch (action) {
-      case 'checkLogin':
-        runner.checkLogin(payload.id, payload.password);
-        return;
-
-      case 'registerStudent':
-        runner.registerStudent(payload.fullName);
-        return;
-
-      case 'listAttempts':
-        runner.listAttempts(payload.adminKey);
-        return;
-
-      case 'setMaxAttempts':
-        runner.setMaxAttempts(
-          payload.adminKey,
-          payload.id,
-          payload.max
-        );
-        return;
-
-      case 'resetAttempts':
-        runner.resetAttempts(
-          payload.adminKey,
-          payload.id
-        );
-        return;
+    if(window.google && google.script && google.script.run){
+      const runner = google.script.run.withSuccessHandler(onSuccess).withFailureHandler(fail);
+      switch(action){
+        case 'checkLogin': runner.checkLogin(payload.id, payload.password); return;
+        case 'registerStudent': runner.registerStudent(payload.fullName); return;
+        case 'listAttempts': runner.listAttempts(payload.adminKey); return;
+        case 'setMaxAttempts': runner.setMaxAttempts(payload.adminKey, payload.id, payload.max); return;
+        case 'resetAttempts': runner.resetAttempts(payload.adminKey, payload.id); return;
+      }
+      return;
     }
 
-    fail(new Error('Unknown action: ' + action));
-    return;
+    if(!APPS_SCRIPT_ENDPOINT || APPS_SCRIPT_ENDPOINT.indexOf('PASTE_') === 0){
+      fail('Server endpoint not configured. Set APPS_SCRIPT_ENDPOINT at the top of this file.');
+      return;
+    }
+
+    const body = Object.assign({ action: action }, payload);
+    fetch(APPS_SCRIPT_ENDPOINT, { method: 'POST', body: JSON.stringify(body) })
+      .then(function(r){
+        return r.text().then(function(text){
+          if(!r.ok){
+            throw new Error('HTTP ' + r.status + ' from server.');
+          }
+          try{
+            return JSON.parse(text);
+          }catch(e){
+            if(text.trim().indexOf('<') === 0){
+              throw new Error('Server returned a webpage instead of JSON. Check that APPS_SCRIPT_ENDPOINT ends in /exec and the deployment is set to "Execute as: Me" / "Who has access: Anyone", then redeploy a new version.');
+            }
+            throw new Error('Unexpected server response: ' + text.slice(0, 120));
+          }
+        });
+      })
+      .then(onSuccess)
+      .catch(fail);
   }
 
-  if (
-    !APPS_SCRIPT_ENDPOINT ||
-    !APPS_SCRIPT_ENDPOINT.endsWith('/exec')
-  ) {
-    fail(new Error('Invalid Apps Script /exec URL.'));
-    return;
+  function showApp(session){
+    loginScreen.hidden = true;
+    appScreen.hidden = false;
+    sessionName.textContent = session.name + (session.role === 'admin' ? ' (Admin)' : '');
+    sessionName.title = session.role === 'admin' ? 'Administrator' : session.name + ' · ' + session.id;
+
+    if(session.role === 'student' && typeof session.attemptsUsed === 'number'){
+      attemptsBadge.textContent = ' · attempt ' + session.attemptsUsed + '/' + session.attemptsMax;
+    } else {
+      attemptsBadge.textContent = '';
+    }
+
+    adminPanelBtn.hidden = session.role !== 'admin';
+    if(session.role === 'admin' && session.adminKey){ sessionAdminKey = session.adminKey; }
+
+    if(!appStarted){ appStarted = true; window.__startApp(); }
   }
-
-  const requestBody = JSON.stringify(
-    Object.assign({ action: action }, payload || {})
-  );
-
-  fetch(APPS_SCRIPT_ENDPOINT, {
-    method: 'POST',
-
-    // Important: text/plain prevents a CORS preflight request.
-    headers: {
-      'Content-Type': 'text/plain;charset=utf-8'
-    },
-
-    body: requestBody,
-    redirect: 'follow',
-    cache: 'no-store'
-  })
-    .then(async function(response) {
-      const text = await response.text();
-
-      if (!response.ok) {
-        throw new Error(
-          'Apps Script returned HTTP ' + response.status
-        );
-      }
-
-      try {
-        return JSON.parse(text);
-      } catch (error) {
-        throw new Error(
-          'Apps Script did not return JSON: ' + text.substring(0, 300)
-        );
-      }
-    })
-    .then(onSuccess)
-    .catch(function(error) {
-      console.error('Apps Script request failed:', error);
-      fail(error);
-    });
-}
 
   function showLogin(message, opts){
     opts = opts || {};
@@ -1111,7 +1081,8 @@ const APPS_SCRIPT_ENDPOINT = "https://script.google.com/macros/s/AKfycbyGslISXtF
     }
     function onFail(err){
       loginBtn.disabled = false;
-      showLogin('Could not reach the server. Please try again.');
+      console.error('checkLogin failed:', err);
+      showLogin('Could not reach the server (' + _errText(err) + '). Please try again.');
     }
 
     callAction('checkLogin', { id: id, password: pass }, onResult, onFail);
@@ -1154,9 +1125,10 @@ const APPS_SCRIPT_ENDPOINT = "https://script.google.com/macros/s/AKfycbyGslISXtF
         regError.textContent = (res && res.message) || 'Could not generate an ID. Please try again.';
       }
     }
-    function onFail(){
+    function onFail(err){
       regBtn.disabled = false;
-      regError.textContent = 'Could not reach the server. Please try again.';
+      console.error('registerStudent failed:', err);
+      regError.textContent = 'Could not reach the server (' + _errText(err) + '). Please try again.';
     }
 
     callAction('registerStudent', { fullName: name }, onResult, onFail);
@@ -1214,8 +1186,9 @@ const APPS_SCRIPT_ENDPOINT = "https://script.google.com/macros/s/AKfycbyGslISXtF
       adminList.innerHTML = '<div class="admin-hint">' + ((res && res.message) || 'Action failed.') + '</div>';
     }
   }
-  function onAdminFail(){
-    adminList.innerHTML = '<div class="admin-hint">Could not reach the server.</div>';
+  function onAdminFail(err){
+    console.error('admin action failed:', err);
+    adminList.innerHTML = '<div class="admin-hint">Could not reach the server (' + _errText(err) + ').</div>';
   }
 
   function loadAdminList(){
