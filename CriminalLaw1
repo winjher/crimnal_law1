@@ -954,6 +954,10 @@ window.__startApp = function(){
 </script>
 
 <script>
+// PASTE your deployed Google Apps Script Web App URL here (see Code.gs).
+// It must end in /exec.
+const APPS_SCRIPT_ENDPOINT = "https://script.google.com/macros/s/AKfycbwqwUSWLsuZgBuGvW4CmdhXETA3FVLlT3lfyfvmyRtXfL9O2bCPzfhPbfS0eJJtOcA_/exec";
+
 (function(){
   const loginScreen = document.getElementById('loginScreen');
   const appScreen = document.getElementById('appScreen');
@@ -970,7 +974,42 @@ window.__startApp = function(){
   const adminList = document.getElementById('adminList');
 
   let appStarted = false;
+  let sessionAdminKey = null; // held in memory only, for admin-only calls this tab session
   const SESSION_KEY = 'cl1_case_digest_session';
+
+  /**
+   * Calls the backend by whichever channel is available:
+   *  - google.script.run, when this page is served BY Apps Script itself
+   *  - fetch(APPS_SCRIPT_ENDPOINT), when this page is hosted elsewhere
+   *    (e.g. GitHub Pages) and APPS_SCRIPT_ENDPOINT has been filled in.
+   * action: 'checkLogin' | 'registerStudent' | 'listAttempts' | 'setMaxAttempts' | 'resetAttempts'
+   */
+  function callAction(action, payload, onSuccess, onFailure){
+    const fail = onFailure || function(){ /* no-op */ };
+
+    if(window.google && google.script && google.script.run){
+      const runner = google.script.run.withSuccessHandler(onSuccess).withFailureHandler(fail);
+      switch(action){
+        case 'checkLogin': runner.checkLogin(payload.id, payload.password); return;
+        case 'registerStudent': runner.registerStudent(payload.fullName); return;
+        case 'listAttempts': runner.listAttempts(payload.adminKey); return;
+        case 'setMaxAttempts': runner.setMaxAttempts(payload.adminKey, payload.id, payload.max); return;
+        case 'resetAttempts': runner.resetAttempts(payload.adminKey, payload.id); return;
+      }
+      return;
+    }
+
+    if(!APPS_SCRIPT_ENDPOINT || APPS_SCRIPT_ENDPOINT.indexOf('PASTE_') === 0){
+      fail('Server endpoint not configured. Set APPS_SCRIPT_ENDPOINT at the top of this file.');
+      return;
+    }
+
+    const body = Object.assign({ action: action }, payload);
+    fetch(APPS_SCRIPT_ENDPOINT, { method: 'POST', body: JSON.stringify(body) })
+      .then(function(r){ return r.json(); })
+      .then(onSuccess)
+      .catch(fail);
+  }
 
   function showApp(session){
     loginScreen.hidden = true;
@@ -985,6 +1024,7 @@ window.__startApp = function(){
     }
 
     adminPanelBtn.hidden = session.role !== 'admin';
+    if(session.role === 'admin' && session.adminKey){ sessionAdminKey = session.adminKey; }
 
     if(!appStarted){ appStarted = true; window.__startApp(); }
   }
@@ -1009,6 +1049,7 @@ window.__startApp = function(){
     function onResult(res){
       loginBtn.disabled = false;
       if(res && res.ok){
+        if(res.role === 'admin'){ res.adminKey = pass; }
         try{ sessionStorage.setItem(SESSION_KEY, JSON.stringify(res)); }catch(e){}
         showApp(res);
       } else if(res && res.locked){
@@ -1022,12 +1063,7 @@ window.__startApp = function(){
       showLogin('Could not reach the server. Please try again.');
     }
 
-    if(window.google && google.script && google.script.run){
-      google.script.run.withSuccessHandler(onResult).withFailureHandler(onFail).checkLogin(id, pass);
-    } else {
-      // Local preview fallback only (no google.script.run outside Apps Script).
-      onFail();
-    }
+    callAction('checkLogin', { id: id, password: pass }, onResult, onFail);
   }
 
   loginBtn.addEventListener('click', attemptLogin);
@@ -1072,11 +1108,7 @@ window.__startApp = function(){
       regError.textContent = 'Could not reach the server. Please try again.';
     }
 
-    if(window.google && google.script && google.script.run){
-      google.script.run.withSuccessHandler(onResult).withFailureHandler(onFail).registerStudent(name);
-    } else {
-      onFail();
-    }
+    callAction('registerStudent', { fullName: name }, onResult, onFail);
   }
   regBtn.addEventListener('click', doRegister);
   regName.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') doRegister(); });
@@ -1115,26 +1147,29 @@ window.__startApp = function(){
       const input = row.querySelector('input');
       row.querySelector('.grant').addEventListener('click', ()=>{
         const newMax = Math.max(0, Math.min(50, Number(input.value) || 0));
-        if(window.google && google.script && google.script.run){
-          google.script.run.withSuccessHandler(loadAdminList).setMaxAttempts(r.id, newMax);
-        }
+        callAction('setMaxAttempts', { adminKey: sessionAdminKey, id: r.id, max: newMax }, onAdminResult, onAdminFail);
       });
       row.querySelector('.reset').addEventListener('click', ()=>{
-        if(window.google && google.script && google.script.run){
-          google.script.run.withSuccessHandler(loadAdminList).resetAttempts(r.id);
-        }
+        callAction('resetAttempts', { adminKey: sessionAdminKey, id: r.id }, onAdminResult, onAdminFail);
       });
       adminList.appendChild(row);
     });
   }
 
+  function onAdminResult(res){
+    if(res && res.ok){
+      renderAdminRows(res.rows);
+    } else {
+      adminList.innerHTML = '<div class="admin-hint">' + ((res && res.message) || 'Action failed.') + '</div>';
+    }
+  }
+  function onAdminFail(){
+    adminList.innerHTML = '<div class="admin-hint">Could not reach the server.</div>';
+  }
+
   function loadAdminList(){
     adminList.textContent = 'Loading…';
-    if(window.google && google.script && google.script.run){
-      google.script.run.withSuccessHandler(renderAdminRows).listAttempts();
-    } else {
-      adminList.textContent = 'Admin panel only works when deployed in Apps Script.';
-    }
+    callAction('listAttempts', { adminKey: sessionAdminKey }, onAdminResult, onAdminFail);
   }
 
   adminPanelBtn.addEventListener('click', ()=>{
