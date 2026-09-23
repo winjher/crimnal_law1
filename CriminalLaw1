@@ -956,7 +956,7 @@ window.__startApp = function(){
 <script>
 // PASTE your deployed Google Apps Script Web App URL here (see Code.gs).
 // It must end in /exec.
-const APPS_SCRIPT_ENDPOINT = "https://script.google.com/macros/s/AKfycbwqwUSWLsuZgBuGvW4CmdhXETA3FVLlT3lfyfvmyRtXfL9O2bCPzfhPbfS0eJJtOcA_/exec";
+const APPS_SCRIPT_ENDPOINT = "https://script.google.com/macros/s/AKfycbzABF_awvpzeUfNS_rA7MRopoxlYp2_Env3wSIv1-IjmWRii3Kjwxt7T3V4xMhve8Ye/exec";
 
 (function(){
   const loginScreen = document.getElementById('loginScreen');
